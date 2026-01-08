@@ -363,16 +363,23 @@ if [[ "$CONFIGURE_SSH" == "true" ]]; then
         --name "$VM_NAME" \
         --command-id RunShellScript \
         --scripts "
+# Get existing AllowUsers if any
+EXISTING=\$(grep '^AllowUsers' /etc/ssh/sshd_config 2>/dev/null | sed 's/^AllowUsers //' || echo '')
+
+# Merge with new users, remove duplicates
+ALL_USERS=\"\$EXISTING $ALLOW_USERS\"
+UNIQUE_USERS=\$(echo \"\$ALL_USERS\" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+
 # Remove any existing AllowUsers directive
 sed -i '/^AllowUsers/d' /etc/ssh/sshd_config
 
-# Add AllowUsers directive
-echo 'AllowUsers $ALLOW_USERS' >> /etc/ssh/sshd_config
+# Add AllowUsers directive with unique users
+echo \"AllowUsers \$UNIQUE_USERS\" >> /etc/ssh/sshd_config
 
 # Restart sshd
 systemctl restart sshd
 
-echo 'SSH access restricted to: $ALLOW_USERS'
+echo \"SSH access restricted to: \$UNIQUE_USERS\"
 " \
         --output none 2>/dev/null || echo "  Warning: Could not configure SSH restrictions via Run Command"
 
