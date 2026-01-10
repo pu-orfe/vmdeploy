@@ -27,9 +27,6 @@ param enableEntraLogin bool = false
 @description('Enable SSH access in NSG (requires enableEntraLogin for Entra ID SSH)')
 param enableSSHAccess bool = false
 
-@description('Source IP ranges for SSH access (array of CIDR notations)')
-param sshSourceAddressPrefixes array = []
-
 @description('Short project name for storage account (lowercase, no special chars)')
 param projectName string = 'vm'
 
@@ -85,28 +82,29 @@ var customInboundRules = [for rule in inboundPorts: {
   }
 }]
 
+// SSH rules mirroring inbound port rules (same source IPs, port 22, priorities 900+)
+var sshInboundRules = [for (rule, i) in inboundPorts: {
+  name: 'SSH-${rule.name}'
+  properties: {
+    priority: 900 + i
+    direction: 'Inbound'
+    access: 'Allow'
+    protocol: 'Tcp'
+    sourcePortRange: '*'
+    destinationPortRange: '22'
+    sourceAddressPrefixes: rule.sourceAddressPrefixes
+    destinationAddressPrefix: '*'
+  }
+}]
+
 // Network Security Group - Conditional SSH, custom inbound ports
 resource nsg 'Microsoft.Network/networkSecurityGroups@2023-05-01' = {
   name: nsgName
   location: location
   properties: {
     securityRules: concat(
-      // SSH rule - Allow or Deny based on enableSSHAccess
-      enableSSHAccess && !empty(sshSourceAddressPrefixes) ? [
-        {
-          name: 'AllowSSH'
-          properties: {
-            priority: 1000
-            direction: 'Inbound'
-            access: 'Allow'
-            protocol: 'Tcp'
-            sourcePortRange: '*'
-            destinationPortRange: '22'
-            sourceAddressPrefixes: sshSourceAddressPrefixes
-            destinationAddressPrefix: '*'
-          }
-        }
-      ] : [
+      // SSH rules - Allow (mirroring service port sources) or Deny based on enableSSHAccess
+      enableSSHAccess && !empty(inboundPorts) ? sshInboundRules : [
         {
           name: 'DenySSH'
           properties: {
@@ -347,8 +345,8 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-07-01' = {
     storageProfile: {
       imageReference: {
         publisher: 'Canonical'
-        offer: '0001-com-ubuntu-server-jammy'
-        sku: '22_04-lts-gen2'
+        offer: 'ubuntu-24_04-lts'
+        sku: 'server'
         version: 'latest'
       }
       osDisk: {

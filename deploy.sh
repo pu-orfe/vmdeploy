@@ -78,7 +78,7 @@ Entra ID Access (enables Serial Console login with Entra credentials):
 SSH Access (uses same source IPs as service ports from parameters file):
   --enable-ssh                 Enable SSH access in NSG (default: denied)
   --ssh-user EMAIL             Entra ID user allowed to SSH (repeatable)
-                               If not specified, all Entra ID users can SSH
+                               Adds to ssh_allowed group (defense in depth with RBAC)
 
 Other:
   -h, --help                   Show this help message
@@ -382,13 +382,6 @@ if [[ -n "$PARAMETERS_FILE" ]]; then
     SERVICE_USER=$(jq -r '.parameters.serviceUser.value // "appuser"' "$PARAMETERS_FILE")
     SERVICE_PORTS=$(jq -r '.parameters.servicePorts.value // ""' "$PARAMETERS_FILE")
     INBOUND_PORTS_JSON=$(jq -c '.parameters.inboundPorts.value // []' "$PARAMETERS_FILE")
-    # Extract all unique source IP prefixes for SSH (same as service ports)
-    SSH_SOURCE_PREFIXES_JSON=$(jq -c '[.parameters.inboundPorts.value // [] | .[].sourceAddressPrefixes] | add | unique' "$PARAMETERS_FILE")
-fi
-
-# Default SSH source prefixes to empty array if not loaded
-if [[ -z "$SSH_SOURCE_PREFIXES_JSON" ]]; then
-    SSH_SOURCE_PREFIXES_JSON="[]"
 fi
 
 # Check if resource group exists
@@ -764,7 +757,6 @@ if [[ "$UPDATE_MODE" == "true" ]]; then
             adminPassword='$ADMIN_PASSWORD' \
             enableEntraLogin=$ENABLE_ENTRA_LOGIN \
             enableSSHAccess=$ENABLE_SSH \
-            sshSourceAddressPrefixes='$SSH_SOURCE_PREFIXES_JSON' \
             projectName='$PROJECT_NAME' \
             inboundPorts='$INBOUND_PORTS_JSON' \
             createPublicIp=$CREATE_PUBLIC_IP \
@@ -787,7 +779,6 @@ else
             adminPassword='$ADMIN_PASSWORD' \
             enableEntraLogin=$ENABLE_ENTRA_LOGIN \
             enableSSHAccess=$ENABLE_SSH \
-            sshSourceAddressPrefixes='$SSH_SOURCE_PREFIXES_JSON' \
             projectName='$PROJECT_NAME' \
             inboundPorts='$INBOUND_PORTS_JSON' \
             createPublicIp=$CREATE_PUBLIC_IP \
@@ -1028,40 +1019,63 @@ if [[ "$ENABLE_ENTRA_LOGIN" == "true" ]]; then
 fi
 
 # Configure SSH user restrictions if SSH is enabled with specific users
+# Uses AllowGroups for defense in depth (Azure RBAC + Linux group membership)
 if [[ "$ENABLE_SSH" == "true" && ${#SSH_USERS[@]} -gt 0 ]]; then
     echo ""
     echo "Configuring SSH access restrictions..."
 
-    # Build AllowUsers directive (Entra ID users only, no local admin)
-    ALLOW_USERS=""
+    # Build space-separated list of SSH users
+    SSH_USERS_LIST=""
     for user in "${SSH_USERS[@]}"; do
-        if [[ -z "$ALLOW_USERS" ]]; then
-            ALLOW_USERS="$user"
+        if [[ -z "$SSH_USERS_LIST" ]]; then
+            SSH_USERS_LIST="$user"
         else
-            ALLOW_USERS="$ALLOW_USERS $user"
+            SSH_USERS_LIST="$SSH_USERS_LIST $user"
         fi
     done
 
     # Apply SSH configuration via Run Command
+    # Creates ssh_allowed group and adds users, then configures AllowGroups
     az vm run-command invoke \
         --resource-group "$RESOURCE_GROUP" \
         --name "$VM_NAME" \
         --command-id RunShellScript \
         --scripts "
-# Remove any existing AllowUsers directive
-sed -i '/^AllowUsers/d' /etc/ssh/sshd_config
+# Create ssh_allowed group if it doesn't exist
+getent group ssh_allowed >/dev/null 2>&1 || groupadd ssh_allowed
 
-# Add AllowUsers directive
-echo 'AllowUsers $ALLOW_USERS' >> /etc/ssh/sshd_config
+# Add SSH users to the group
+# Don't pre-create users - AAD will provision them on first login with its own UIDs
+# We add usernames directly to /etc/group so they're allowed when AAD creates them
+for user in $SSH_USERS_LIST; do
+    if id \"\$user\" >/dev/null 2>&1; then
+        # User exists (already provisioned by AAD), use usermod
+        usermod -aG ssh_allowed \"\$user\" 2>/dev/null || true
+    else
+        # User doesn't exist yet, add username to group file directly
+        # This allows them to log in once AAD provisions their account
+        if ! grep -q \"ssh_allowed:.*\$user\" /etc/group; then
+            sed -i \"s/^\\(ssh_allowed:.*\\)/\\1,\$user/\" /etc/group
+            # Clean up any leading comma if group was empty
+            sed -i 's/ssh_allowed:\\([^:]*\\):,/ssh_allowed:\\1:/' /etc/group
+        fi
+    fi
+done
+
+# Configure AllowGroups (ssh_allowed for specific users, aad_admins for VM admins)
+sed -i '/^AllowUsers/d' /etc/ssh/sshd_config
+sed -i '/^AllowGroups/d' /etc/ssh/sshd_config
+echo 'AllowGroups ssh_allowed aad_admins' >> /etc/ssh/sshd_config
 
 # Restart sshd
-systemctl restart sshd
+systemctl restart ssh
 
-echo 'SSH access restricted to: $ALLOW_USERS'
+echo 'SSH access restricted to groups: ssh_allowed aad_admins'
+echo 'Users in ssh_allowed:' && getent group ssh_allowed
 " \
         --output none 2>/dev/null || echo "  Warning: Could not configure SSH restrictions via Run Command"
 
-    echo "  SSH access restricted to: $ALLOW_USERS"
+    echo "  SSH access restricted to: $SSH_USERS_LIST (via ssh_allowed group)"
 fi
 
 echo ""

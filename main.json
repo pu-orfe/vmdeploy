@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "11161121114653219276"
+      "templateHash": "10913851309732277666"
     }
   },
   "parameters": {
@@ -66,13 +66,6 @@
       "defaultValue": false,
       "metadata": {
         "description": "Enable SSH access in NSG (requires enableEntraLogin for Entra ID SSH)"
-      }
-    },
-    "sshSourceAddressPrefixes": {
-      "type": "array",
-      "defaultValue": [],
-      "metadata": {
-        "description": "Source IP ranges for SSH access (array of CIDR notations)"
       }
     },
     "projectName": {
@@ -149,6 +142,23 @@
             "destinationAddressPrefix": "*"
           }
         }
+      },
+      {
+        "name": "sshInboundRules",
+        "count": "[length(parameters('inboundPorts'))]",
+        "input": {
+          "name": "[format('SSH-{0}', parameters('inboundPorts')[copyIndex('sshInboundRules')].name)]",
+          "properties": {
+            "priority": "[add(900, copyIndex('sshInboundRules'))]",
+            "direction": "Inbound",
+            "access": "Allow",
+            "protocol": "Tcp",
+            "sourcePortRange": "*",
+            "destinationPortRange": "22",
+            "sourceAddressPrefixes": "[parameters('inboundPorts')[copyIndex('sshInboundRules')].sourceAddressPrefixes]",
+            "destinationAddressPrefix": "*"
+          }
+        }
       }
     ],
     "kvSuffix": "[if(empty(parameters('keyVaultSuffix')), substring(uniqueString(resourceGroup().id, deployment().name), 0, 6), parameters('keyVaultSuffix'))]",
@@ -169,7 +179,7 @@
       "name": "[variables('nsgName')]",
       "location": "[parameters('location')]",
       "properties": {
-        "securityRules": "[concat(if(and(parameters('enableSSHAccess'), not(empty(parameters('sshSourceAddressPrefixes')))), createArray(createObject('name', 'AllowSSH', 'properties', createObject('priority', 1000, 'direction', 'Inbound', 'access', 'Allow', 'protocol', 'Tcp', 'sourcePortRange', '*', 'destinationPortRange', '22', 'sourceAddressPrefixes', parameters('sshSourceAddressPrefixes'), 'destinationAddressPrefix', '*'))), createArray(createObject('name', 'DenySSH', 'properties', createObject('priority', 1000, 'direction', 'Inbound', 'access', 'Deny', 'protocol', 'Tcp', 'sourcePortRange', '*', 'destinationPortRange', '22', 'sourceAddressPrefix', '*', 'destinationAddressPrefix', '*')))), variables('customInboundRules'))]"
+        "securityRules": "[concat(if(and(parameters('enableSSHAccess'), not(empty(parameters('inboundPorts')))), variables('sshInboundRules'), createArray(createObject('name', 'DenySSH', 'properties', createObject('priority', 1000, 'direction', 'Inbound', 'access', 'Deny', 'protocol', 'Tcp', 'sourcePortRange', '*', 'destinationPortRange', '22', 'sourceAddressPrefix', '*', 'destinationAddressPrefix', '*')))), variables('customInboundRules'))]"
       }
     },
     {
@@ -401,8 +411,8 @@
         "storageProfile": {
           "imageReference": {
             "publisher": "Canonical",
-            "offer": "0001-com-ubuntu-server-jammy",
-            "sku": "22_04-lts-gen2",
+            "offer": "ubuntu-24_04-lts",
+            "sku": "server",
             "version": "latest"
           },
           "osDisk": {

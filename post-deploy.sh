@@ -33,7 +33,7 @@ Actions:
   --service-user USERNAME      Service user for sudoers (default: appuser)
   --parameters FILE            Load service user from parameters file
   --ssh-user EMAIL             Restrict SSH access to specific Entra ID user (repeatable)
-                               Configures AllowUsers in sshd_config
+                               Adds user to ssh_allowed group, configures AllowGroups
 
 Examples:
   Reset admin password:
@@ -344,46 +344,62 @@ if [[ "$ASSIGN_ROLES" == "true" ]]; then
 fi
 
 # Configure SSH user restrictions
+# Uses AllowGroups for defense in depth (Azure RBAC + Linux group membership)
 if [[ "$CONFIGURE_SSH" == "true" ]]; then
     echo "Configuring SSH access restrictions..."
 
-    # Build AllowUsers directive (Entra ID users only)
-    ALLOW_USERS=""
+    # Build space-separated list of SSH users
+    SSH_USERS_LIST=""
     for user in "${SSH_USERS[@]}"; do
-        if [[ -z "$ALLOW_USERS" ]]; then
-            ALLOW_USERS="$user"
+        if [[ -z "$SSH_USERS_LIST" ]]; then
+            SSH_USERS_LIST="$user"
         else
-            ALLOW_USERS="$ALLOW_USERS $user"
+            SSH_USERS_LIST="$SSH_USERS_LIST $user"
         fi
     done
 
     # Apply SSH configuration via Run Command
+    # Creates ssh_allowed group and adds users, then configures AllowGroups
     az vm run-command invoke \
         --resource-group "$RESOURCE_GROUP" \
         --name "$VM_NAME" \
         --command-id RunShellScript \
         --scripts "
-# Get existing AllowUsers if any
-EXISTING=\$(grep '^AllowUsers' /etc/ssh/sshd_config 2>/dev/null | sed 's/^AllowUsers //' || echo '')
+# Create ssh_allowed group if it doesn't exist
+getent group ssh_allowed >/dev/null 2>&1 || groupadd ssh_allowed
 
-# Merge with new users, remove duplicates
-ALL_USERS=\"\$EXISTING $ALLOW_USERS\"
-UNIQUE_USERS=\$(echo \"\$ALL_USERS\" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+# Add SSH users to the group
+# Don't pre-create users - AAD will provision them on first login with its own UIDs
+# We add usernames directly to /etc/group so they're allowed when AAD creates them
+for user in $SSH_USERS_LIST; do
+    if id \"\$user\" >/dev/null 2>&1; then
+        # User exists (already provisioned by AAD), use usermod
+        usermod -aG ssh_allowed \"\$user\" 2>/dev/null || true
+    else
+        # User doesn't exist yet, add username to group file directly
+        # This allows them to log in once AAD provisions their account
+        if ! grep -q \"ssh_allowed:.*\$user\" /etc/group; then
+            sed -i \"s/^\\(ssh_allowed:.*\\)/\\1,\$user/\" /etc/group
+            # Clean up any leading comma if group was empty
+            sed -i 's/ssh_allowed:\\([^:]*\\):,/ssh_allowed:\\1:/' /etc/group
+        fi
+    fi
+done
 
-# Remove any existing AllowUsers directive
+# Configure AllowGroups (ssh_allowed for specific users, aad_admins for VM admins)
 sed -i '/^AllowUsers/d' /etc/ssh/sshd_config
-
-# Add AllowUsers directive with unique users
-echo \"AllowUsers \$UNIQUE_USERS\" >> /etc/ssh/sshd_config
+sed -i '/^AllowGroups/d' /etc/ssh/sshd_config
+echo 'AllowGroups ssh_allowed aad_admins' >> /etc/ssh/sshd_config
 
 # Restart sshd
-systemctl restart sshd
+systemctl restart ssh
 
-echo \"SSH access restricted to: \$UNIQUE_USERS\"
+echo 'SSH access restricted to groups: ssh_allowed aad_admins'
+echo 'Users in ssh_allowed:' && getent group ssh_allowed
 " \
         --output none 2>/dev/null || echo "  Warning: Could not configure SSH restrictions via Run Command"
 
-    echo "  SSH access restricted to: $ALLOW_USERS"
+    echo "  SSH access restricted to: $SSH_USERS_LIST (via ssh_allowed group)"
     echo ""
 fi
 
