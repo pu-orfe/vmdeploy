@@ -6,6 +6,7 @@ param location string = resourceGroup().location
 
 @description('VM size')
 @allowed([
+  'Standard_D2s_v5'
   'Standard_D4s_v5'
   'Standard_D8s_v5'
   'Standard_D16s_v5'
