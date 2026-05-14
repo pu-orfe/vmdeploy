@@ -99,6 +99,7 @@ The script will prompt for an admin password (used for Serial Console access).
 | `--entra-user` | Entra ID user with standard access (repeatable) |
 | `--service-admin EMAIL` | Entra ID user who can act as service user (repeatable) |
 | `--dry-run` | Show what would happen without making changes |
+| `--deallocate` | Stop VM and release compute (retains IP/disks) |
 | `--destroy` | Tear down all resources |
 | `--bicep FILE` | Custom Bicep template (default: ./main.bicep) |
 | `--cloud-init FILE` | Custom cloud-init YAML (default: ./cloud-init.yaml) |
@@ -138,10 +139,17 @@ When you run `deploy.sh` against an existing resource group, you'll be prompted 
 
 This makes it safe to set up a CNAME pointing to your VM's FQDN - the DNS name will survive updates.
 
-## Tear Down
+## Tear Down & Parking
 
+### Stop and Deallocate (Save costs, retain IP)
+Use this to stop compute billing while keeping your IP and disk data.
 ```bash
-# Remove all resources
+./deploy.sh -g my-resource-group -n my-vm --deallocate
+```
+
+### Full Destroy
+Use this to permanently remove all resources.
+```bash
 ./deploy.sh -g my-resource-group --destroy
 ```
 

@@ -15,6 +15,7 @@ VM_SIZE="Standard_D8s_v5"
 ALERT_EMAIL=""
 DATA_DISK_SIZE=64
 DESTROY=false
+DEALLOCATE=false
 DRY_RUN=false
 ADMIN_USERNAME="azureuser"
 ENTRA_ADMIN=""
@@ -51,6 +52,7 @@ Required:
 
 Actions:
   --destroy                    Tear down all resources in the resource group
+  --deallocate                 Stop the VM and release compute resources (retains IP/disks)
   --dry-run                    Show what would happen without making changes
   --update                     In-place update (skip interactive prompt if RG exists)
   -y, --yes                    Skip confirmation prompts
@@ -106,6 +108,9 @@ Examples:
   Destroy:
     $0 -g myapp-prod --destroy
 
+  Deallocate (Park):
+    $0 -g myapp-prod -n myapp-vm --deallocate
+
 EOF
     exit 1
 }
@@ -146,6 +151,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --destroy)
             DESTROY=true
+            shift
+            ;;
+        --deallocate)
+            DEALLOCATE=true
             shift
             ;;
         --dry-run)
@@ -339,6 +348,62 @@ if [[ "$DESTROY" == "true" ]]; then
     echo ""
     echo "========================================"
     echo "Tear down complete!"
+    echo "========================================"
+    exit 0
+fi
+
+# Handle deallocate mode
+if [[ "$DEALLOCATE" == "true" ]]; then
+    if [[ -z "$VM_NAME" ]]; then
+        echo "Error: VM name is required for deallocate"
+        usage
+    fi
+
+    VM_EXISTS=false
+    if az vm show --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" &> /dev/null; then
+        VM_EXISTS=true
+    fi
+
+    echo "========================================"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "Azure VM Deallocate (DRY RUN)"
+    else
+        echo "Azure VM Deallocate"
+    fi
+    echo "========================================"
+    echo "Resource Group: $RESOURCE_GROUP"
+    echo "VM Name: $VM_NAME"
+    echo "VM Exists: $VM_EXISTS"
+    echo ""
+    echo "This will STOP the VM and release compute resources."
+    echo "  - CPU and RAM billing will stop"
+    echo "  - Static Public IP will be RETAINED"
+    echo "  - Disks will be RETAINED (standard storage costs apply)"
+    echo "========================================"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo ""
+        if [[ "$VM_EXISTS" == "true" ]]; then
+            echo "DRY RUN: Would deallocate VM '$VM_NAME' in '$RESOURCE_GROUP'"
+        else
+            echo "DRY RUN: VM '$VM_NAME' does not exist in '$RESOURCE_GROUP', nothing to deallocate"
+        fi
+        exit 0
+    fi
+
+    if [[ "$VM_EXISTS" == "false" ]]; then
+        echo ""
+        echo "VM '$VM_NAME' does not exist in resource group '$RESOURCE_GROUP'."
+        exit 0
+    fi
+
+    echo ""
+    log "Deallocating VM '$VM_NAME'..."
+    az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+
+    echo ""
+    echo "========================================"
+    echo "Deallocate complete!"
     echo "========================================"
     exit 0
 fi
