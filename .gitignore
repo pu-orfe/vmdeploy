@@ -31,3 +31,4 @@ credentials.json
 .terraform.lock.hcl
 
 .claude
+GEMINI.md
