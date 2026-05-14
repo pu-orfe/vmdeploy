@@ -16,6 +16,7 @@ ALERT_EMAIL=""
 DATA_DISK_SIZE=64
 DESTROY=false
 DEALLOCATE=false
+START=false
 DRY_RUN=false
 ADMIN_USERNAME="azureuser"
 ENTRA_ADMIN=""
@@ -53,6 +54,7 @@ Required:
 Actions:
   --destroy                    Tear down all resources in the resource group
   --deallocate                 Stop the VM and release compute resources (retains IP/disks)
+  --start                      Start a deallocated VM
   --dry-run                    Show what would happen without making changes
   --update                     In-place update (skip interactive prompt if RG exists)
   -y, --yes                    Skip confirmation prompts
@@ -111,6 +113,9 @@ Examples:
   Deallocate (Park):
     $0 -g myapp-prod -n myapp-vm --deallocate
 
+  Start (Resume):
+    $0 -g myapp-prod -n myapp-vm --start
+
 EOF
     exit 1
 }
@@ -155,6 +160,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --deallocate)
             DEALLOCATE=true
+            shift
+            ;;
+        --start)
+            START=true
             shift
             ;;
         --dry-run)
@@ -404,6 +413,59 @@ if [[ "$DEALLOCATE" == "true" ]]; then
     echo ""
     echo "========================================"
     echo "Deallocate complete!"
+    echo "========================================"
+    exit 0
+fi
+
+# Handle start mode
+if [[ "$START" == "true" ]]; then
+    if [[ -z "$VM_NAME" ]]; then
+        echo "Error: VM name is required for start"
+        usage
+    fi
+
+    VM_EXISTS=false
+    if az vm show --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" &> /dev/null; then
+        VM_EXISTS=true
+    fi
+
+    echo "========================================"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "Azure VM Start (DRY RUN)"
+    else
+        echo "Azure VM Start"
+    fi
+    echo "========================================"
+    echo "Resource Group: $RESOURCE_GROUP"
+    echo "VM Name: $VM_NAME"
+    echo "VM Exists: $VM_EXISTS"
+    echo ""
+    echo "This will START the VM and allocate compute resources."
+    echo "========================================"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo ""
+        if [[ "$VM_EXISTS" == "true" ]]; then
+            echo "DRY RUN: Would start VM '$VM_NAME' in '$RESOURCE_GROUP'"
+        else
+            echo "DRY RUN: VM '$VM_NAME' does not exist in '$RESOURCE_GROUP', nothing to start"
+        fi
+        exit 0
+    fi
+
+    if [[ "$VM_EXISTS" == "false" ]]; then
+        echo ""
+        echo "VM '$VM_NAME' does not exist in resource group '$RESOURCE_GROUP'."
+        exit 0
+    fi
+
+    echo ""
+    log "Starting VM '$VM_NAME'..."
+    az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+
+    echo ""
+    echo "========================================"
+    echo "Start complete!"
     echo "========================================"
     exit 0
 fi

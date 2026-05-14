@@ -100,6 +100,7 @@ The script will prompt for an admin password (used for Serial Console access).
 | `--service-admin EMAIL` | Entra ID user who can act as service user (repeatable) |
 | `--dry-run` | Show what would happen without making changes |
 | `--deallocate` | Stop VM and release compute (retains IP/disks) |
+| `--start` | Start a deallocated VM |
 | `--destroy` | Tear down all resources |
 | `--bicep FILE` | Custom Bicep template (default: ./main.bicep) |
 | `--cloud-init FILE` | Custom cloud-init YAML (default: ./cloud-init.yaml) |
@@ -145,6 +146,12 @@ This makes it safe to set up a CNAME pointing to your VM's FQDN - the DNS name w
 Use this to stop compute billing while keeping your IP and disk data.
 ```bash
 ./deploy.sh -g my-resource-group -n my-vm --deallocate
+```
+
+### Resume (Allocate compute)
+Use this to power back on a deallocated VM.
+```bash
+./deploy.sh -g my-resource-group -n my-vm --start
 ```
 
 ### Full Destroy
