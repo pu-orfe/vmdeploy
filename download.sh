@@ -182,19 +182,26 @@ set -e
 "
 for i in "${!VM_PATHS[@]}"; do
     VM_PATH="${VM_PATHS[$i]}"
+    # Ensure VM_PATH doesn't have a trailing slash for azcopy directory copy
+    VM_PATH_CLEAN="${VM_PATH%/}"
     UPLOAD_SCRIPT+="
-echo 'Uploading: $VM_PATH'
-azcopy copy '$VM_PATH' '${BLOB_URL}/transfer-${i}?${SAS_TOKEN}' --recursive 2>&1 || echo 'Warning: Some files may have failed to upload'
+echo 'Uploading: $VM_PATH_CLEAN'
+azcopy copy '$VM_PATH_CLEAN' '${BLOB_URL}/transfer-${i}?${SAS_TOKEN}' --recursive --put-md5 2>&1
 "
 done
 
-az vm run-command invoke --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --command-id RunShellScript --scripts "$UPLOAD_SCRIPT" --output none
+az vm run-command invoke --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --command-id RunShellScript --scripts "$UPLOAD_SCRIPT"
 
 # Step 4: Download from Blob to Local
 log "Step 3: Downloading from Blob storage to local machine..."
 for i in "${!LOCAL_PATHS[@]}"; do
     LOCAL_PATH="${LOCAL_PATHS[$i]}"
-    mkdir -p "$(dirname "$LOCAL_PATH")"
+    # Handle tilde expansion if present
+    if [[ "$LOCAL_PATH" == "~"* ]]; then
+        LOCAL_PATH="${HOME}${LOCAL_PATH:1}"
+    fi
+    mkdir -p "$LOCAL_PATH"
+    log "  Downloading to: $LOCAL_PATH"
     azcopy copy "${BLOB_URL}/transfer-${i}/*?${SAS_TOKEN}" "$LOCAL_PATH" --recursive
 done
 
