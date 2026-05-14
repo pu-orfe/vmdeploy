@@ -42,6 +42,10 @@ SERVICE_USER="appuser"
 SERVICE_PORTS=""
 INBOUND_PORTS_JSON="[]"
 
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
 usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
